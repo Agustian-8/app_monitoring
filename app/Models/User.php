@@ -5,14 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Filament\Models\Contracts\FilamentUser;
-use Filament\Panel;
-use Laravel\Sanctum\HasApiTokens; // <-- 1. Tambahkan ini di atas
+use Laravel\Sanctum\HasApiTokens;
 
-class User extends Authenticatable implements FilamentUser
+class User extends Authenticatable
 {
-    // 2. Tambahkan HasApiTokens di dalam sini
-    use HasApiTokens, HasFactory, Notifiable; 
+    use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
         'name',
@@ -20,6 +17,7 @@ class User extends Authenticatable implements FilamentUser
         'no_hp',
         'password',
         'role',
+        'tipe_karyawan',   // 👈 BARU
         'department',
     ];
 
@@ -28,26 +26,78 @@ class User extends Authenticatable implements FilamentUser
         'remember_token',
     ];
 
-    protected function casts(): array
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password'          => 'hashed',
+    ];
+
+    // ======================================================
+    // HELPER METHODS
+    // ======================================================
+
+    /**
+     * Cek apakah user adalah admin/HRD.
+     */
+    public function isAdmin(): bool
     {
-        return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-        ];
+        return $this->role === 'admin';
     }
 
-    public function visits()
+    /**
+     * Cek apakah user adalah sales/lapangan.
+     */
+    public function isSales(): bool
     {
-        return $this->hasMany(Visit::class);
+        return $this->role === 'sales';
     }
+
+    /**
+     * Cek apakah user adalah karyawan kantor.
+     */
+    public function isKantor(): bool
+    {
+        return $this->tipe_karyawan === 'kantor';
+    }
+
+    /**
+     * Cek apakah user adalah karyawan lapangan.
+     */
+    public function isLapangan(): bool
+    {
+        return $this->tipe_karyawan === 'lapangan';
+    }
+
+    /**
+     * Cek apakah user perlu mengakses fitur kunjungan.
+     */
+    public function butuhKunjungan(): bool
+    {
+        return $this->isLapangan();
+    }
+
+    /**
+     * Label tipe karyawan untuk tampilan.
+     */
+    public function getTipeKaryawanLabelAttribute(): string
+    {
+        return match ($this->tipe_karyawan) {
+            'kantor'   => 'Karyawan Kantor',
+            'lapangan' => 'Sales / Lapangan',
+            default    => '-',
+        };
+    }
+
+    // ======================================================
+    // RELATIONS
+    // ======================================================
 
     public function attendances()
     {
         return $this->hasMany(Attendance::class);
     }
 
-    public function canAccessPanel(Panel $panel): bool
+    public function visits()
     {
-        return $this->role === 'admin';
+        return $this->hasMany(Visit::class);
     }
 }

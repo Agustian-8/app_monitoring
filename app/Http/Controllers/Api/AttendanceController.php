@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Attendance;
+use App\Models\AttendanceRule;
+use App\Models\Visit;
 use App\Models\WorkSetting;
 use Carbon\Carbon;
 
@@ -35,7 +37,9 @@ class AttendanceController extends Controller
 
     public function store(Request $request)
     {
+        // ======================================================
         // 1. VALIDASI INPUT
+        // ======================================================
         $request->validate([
             'tipe_absen' => 'required|in:Masuk,Pulang',
             'kode_absen' => 'required|string|max:10',
@@ -49,7 +53,9 @@ class AttendanceController extends Controller
         $now   = Carbon::now();
         $today = Carbon::today();
 
+        // ======================================================
         // 2. VALIDASI KODE ABSEN
+        // ======================================================
         $kode = strtoupper($request->kode_absen);
         $kodeInfo = Attendance::getKodeInfo($kode);
 
@@ -60,7 +66,9 @@ class AttendanceController extends Controller
             ], 400);
         }
 
+        // ======================================================
         // 3. VALIDASI HARI KERJA (KHUSUS KODE HADIR/TELAT)
+        // ======================================================
         $kodeHadir = ['H', 'TL1', 'TL2', 'TL3'];
         if (in_array($kode, $kodeHadir) && !WorkSetting::isWorkday()) {
             return response()->json([
@@ -69,7 +77,9 @@ class AttendanceController extends Controller
             ], 400);
         }
 
+        // ======================================================
         // 4. CEK ABSEN GANDA
+        // ======================================================
         $alreadyAttended = Attendance::where('user_id', $user->id)
             ->whereDate('created_at', $today)
             ->where('tipe_absen', $request->tipe_absen)
@@ -88,7 +98,9 @@ class AttendanceController extends Controller
             ], 400);
         }
 
-        // 5. VALIDASI ALUR
+        // ======================================================
+        // 5. VALIDASI ALUR (HARUS MASUK DULU SEBELUM PULANG)
+        // ======================================================
         if ($request->tipe_absen === 'Pulang') {
             $sudahMasuk = Attendance::where('user_id', $user->id)
                 ->whereDate('created_at', $today)
@@ -103,8 +115,12 @@ class AttendanceController extends Controller
             }
         }
 
-        // 6. VALIDASI GEOFENCING
-        if ($kodeInfo['butuh_lokasi']) {
+        // ======================================================
+        // 6. VALIDASI GEOFENCING (HANYA ABSEN MASUK + KODE YANG BUTUH LOKASI)
+        // Absen Pulang: tidak perlu GPS
+        // Kode DLK, S, IZ, CT: tidak perlu GPS
+        // ======================================================
+        if ($request->tipe_absen === 'Masuk' && $kodeInfo['butuh_lokasi']) {
             if (!$request->latitude || !$request->longitude) {
                 return response()->json([
                     'success' => false,
@@ -129,16 +145,20 @@ class AttendanceController extends Controller
             }
         }
 
-        // 7. VALIDASI FOTO
-        if ($kodeInfo['butuh_foto'] && !$request->hasFile('photo')) {
+        // ======================================================
+        // 7. VALIDASI FOTO (HANYA ABSEN MASUK)
+        // ======================================================
+        if ($request->tipe_absen === 'Masuk' && $kodeInfo['butuh_foto'] && !$request->hasFile('photo')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal: Kode absensi ini membutuhkan foto selfie.',
             ], 400);
         }
 
-        // 8. VALIDASI SURAT
-        if ($kodeInfo['butuh_surat'] && !$request->hasFile('photo')) {
+        // ======================================================
+        // 8. VALIDASI SURAT (HANYA ABSEN MASUK)
+        // ======================================================
+        if ($request->tipe_absen === 'Masuk' && $kodeInfo['butuh_surat'] && !$request->hasFile('photo')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal: Kode absensi ini membutuhkan upload bukti/surat.',
@@ -162,7 +182,7 @@ class AttendanceController extends Controller
                     $now->toDateString() . ' ' . substr($workSetting->jam_masuk, 0, 5)
                 );
 
-                // 👈 TANPA TOLERANSI: telat dihitung langsung dari jam masuk
+                // TANPA TOLERANSI
                 if ($now->greaterThan($jamMasukKerja)) {
                     $menitTelat = (int) abs($jamMasukKerja->diffInMinutes($now));
 
@@ -188,16 +208,22 @@ class AttendanceController extends Controller
             }
         }
 
+        // ======================================================
         // 10. UPLOAD FOTO
+        // ======================================================
         $photoPath = null;
         if ($request->hasFile('photo')) {
             $photoPath = $request->file('photo')->store('attendances', 'public');
         }
 
+        // ======================================================
         // 11. STATUS LAMA (BACKWARD COMPAT)
+        // ======================================================
         $statusLama = self::KODE_TO_STATUS_LAMA[$kode] ?? 'Hadir';
 
+        // ======================================================
         // 12. SIMPAN DATA ABSENSI
+        // ======================================================
         $attendance = Attendance::create([
             'user_id'          => $user->id,
             'tipe_absen'       => $request->tipe_absen,
@@ -212,18 +238,20 @@ class AttendanceController extends Controller
             'keterangan_telat' => $keteranganTelat,
         ]);
 
+        // ======================================================
         // 13. PESAN RESPONS
+        // ======================================================
         $message = 'Absen ' . $request->tipe_absen . ' berhasil dicatat!';
 
         if ($menitTelat > 0) {
-            $message .= " ⚠ Anda telat {$menitTelat} menit (kode: {$kode}).";
+            $message .= " Anda telat {$menitTelat} menit (kode: {$kode}).";
         }
         if ($menitLembur > 0) {
-            $message .= " 💪 Terima kasih! Anda lembur {$menitLembur} menit.";
+            $message .= " Terima kasih! Anda lembur {$menitLembur} menit.";
         }
         if ($kode !== strtoupper($request->kode_absen)) {
             $message .= " Kode absen otomatis disesuaikan dari "
-                        . $request->kode_absen . " → {$kode}.";
+                        . $request->kode_absen . " ke {$kode}.";
         }
 
         return response()->json([
@@ -237,6 +265,9 @@ class AttendanceController extends Controller
         ], 201);
     }
 
+    /**
+     * GET /api/work-today
+     */
     public function todaySchedule()
     {
         $workSetting = WorkSetting::today();
@@ -253,6 +284,9 @@ class AttendanceController extends Controller
         ]);
     }
 
+    /**
+     * GET /api/attendance-codes
+     */
     public function kodeList()
     {
         $list = [];
@@ -274,6 +308,92 @@ class AttendanceController extends Controller
         return response()->json([
             'success' => true,
             'data'    => $list,
+        ]);
+    }
+
+    /**
+     * GET /api/my-stats
+     */
+    public function myStats(Request $request)
+    {
+        $user = $request->user();
+
+        $startOfMonth = Carbon::now()->startOfMonth();
+        $endOfMonth   = Carbon::now()->endOfMonth();
+
+        $attendances = Attendance::where('user_id', $user->id)
+            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+            ->where('tipe_absen', 'Masuk')
+            ->get();
+
+        $totalHadir = 0;
+        $totalTelat = 0;
+        $totalDenda = 0;
+
+        foreach ($attendances as $att) {
+            $kode = $att->kode_absen ?? 'H';
+
+            if (in_array($kode, ['H', 'TL1', 'TL2', 'TL3'])) {
+                $totalHadir++;
+            }
+
+            if ($att->menit_telat > 0) {
+                $totalTelat++;
+            }
+
+            $rule = AttendanceRule::where('kode', $kode)->first();
+            if ($rule && $rule->denda > 0) {
+                $totalDenda += $rule->denda;
+            }
+        }
+
+        $totalKunjungan = Visit::where('user_id', $user->id)
+            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+            ->count();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'hadir'      => $totalHadir,
+                'telat'      => $totalTelat,
+                'kunjungan'  => $totalKunjungan,
+                'denda'      => $totalDenda,
+                'denda_formatted' => $totalDenda > 0
+                    ? 'Rp ' . number_format($totalDenda, 0, ',', '.')
+                    : 'Rp 0',
+                'bulan'      => Carbon::now()->translatedFormat('F Y'),
+            ],
+        ]);
+    }
+
+    /**
+     * GET /api/today-attendance
+     */
+    public function todayAttendance(Request $request)
+    {
+        $user = $request->user();
+        $today = Carbon::today();
+
+        $masuk = Attendance::where('user_id', $user->id)
+            ->whereDate('created_at', $today)
+            ->where('tipe_absen', 'Masuk')
+            ->first();
+
+        $pulang = Attendance::where('user_id', $user->id)
+            ->whereDate('created_at', $today)
+            ->where('tipe_absen', 'Pulang')
+            ->first();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'jam_masuk'    => $masuk  ? $masuk->created_at->format('H:i') : null,
+                'jam_pulang'   => $pulang ? $pulang->created_at->format('H:i') : null,
+                'kode_masuk'   => $masuk?->kode_absen,
+                'kode_pulang'  => $pulang?->kode_absen,
+                'sudah_masuk'  => $masuk ? true : false,
+                'sudah_pulang' => $pulang ? true : false,
+            ],
         ]);
     }
 
