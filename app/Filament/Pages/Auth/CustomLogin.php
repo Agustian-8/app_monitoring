@@ -8,7 +8,7 @@ use Illuminate\Support\HtmlString; // Tambahkan ini untuk membaca tag HTML
 
 class CustomLogin extends BaseLogin
 {
-    // Mengubah Judul dengan warna biru dan ukuran yang pas
+    // Mengubah Judul dengan warna biru dan ukuran yang pasp
     public function getHeading(): string|Htmlable
     {
         return new HtmlString('<span style="color: #2563eb; font-weight: 700;">PT. Pakita Jaya</span>');
